@@ -6,6 +6,7 @@ import numpy as np
 import gym
 import argparse
 import os 
+from utils import get_run_nr
 
 class PolicyGradientAgent():
 
@@ -83,16 +84,9 @@ def main(learning_rate,gamma,nr_envs,entropy_coeff,max_iter,baseline):
 
     sess.run(tf.global_variables_initializer())
 
-    if not os.path.isdir("pg_runs"):
-        os.mkdir("pg_runs")
+    run_nr = get_run_nr("runs",starts_with="PG")
 
-    run_nr = 0
-
-    for d in os.listdir("pg_runs"):
-        if d.startswith("run_"):
-            run_nr += 1
-
-    writer = tf.summary.FileWriter("./pg_runs/run_"+str(run_nr),sess.graph)
+    writer = tf.summary.FileWriter("./runs/PG_"+str(run_nr),sess.graph)
     merged = tf.summary.merge_all()
 
     reward_history = []
