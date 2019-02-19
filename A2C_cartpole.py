@@ -2,125 +2,131 @@
 # -*- coding: utf-8 -*-
 """
 Created on Sat Dec 29 10:43:42 2018
-
 @author: x
+
 """
 
 import gym 
 import tensorflow as tf
 import numpy as np
-from utils import get_run_nr
+from utils import get_run_nr, evaluate_agent, BaseAgent, EnvBatch
 import argparse
 
-class ActorNetwork(object):
+class ActorNetwork():
 
-    def __init__(self,states_dim,n_actions,learning_rate=0.01,reuse=False,name="ActorNetwork"):
+    def __init__(self, states_ph, n_actions, reuse=False, name="ActorNetwork"):
+        with tf.variable_scope(name, reuse=reuse):
 
-        self.n_actions = n_actions
+            net = tf.layers.dense(states_ph,128, activation=tf.nn.relu,name="fcc1")
+            self.logits = tf.layers.dense(net, n_actions, activation = None)
+
+        self.weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=name)
+
+class CriticNetwork():
+
+    def __init__(self,states_ph,reuse=False,name="CriticNetwork"):
 
         with tf.variable_scope(name,reuse=reuse):
 
-            self.states_input = tf.placeholder(tf.float32,(None,states_dim))
-            self.actions_input = tf.placeholder(tf.int32,(None))
-            self.A_values = tf.placeholder(tf.float32,(None,))
-            net = tf.layers.dense(self.states_input,24,activation=tf.nn.relu)
-            self.out = tf.layers.dense(net,n_actions,activation=None)
+            net = tf.layers.dense(states_ph,128,activation=tf.nn.relu, name="fcc1")
+            self.state_value = tf.layers.dense(net,1,activation= None, name="out")
+            self.mean_state_value = tf.reduce_mean(self.state_value)
 
-            self.policy = tf.nn.softmax(self.out)
+        self.weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=name)
 
-            actions_one_hot_enc = tf.one_hot(self.actions_input,n_actions)
+class AdvantageActorCritic(BaseAgent):
 
-            self.neg_log_prob = tf.nn.softmax_cross_entropy_with_logits_v2(logits=self.out,labels=actions_one_hot_enc)
-            self.loss = tf.reduce_mean(self.neg_log_prob*self.A_values)
-            self.train_opt = tf.train.RMSPropOptimizer(learning_rate = learning_rate).minimize(self.loss)
+    def __init__(self, states_dim, n_actions, tau, gamma, actor_lr, critic_lr, use_target=False):
 
-    def train(self,states,actions,advantages):
-        sess = tf.get_default_session()
-        return sess.run([self.loss,self.train_opt],feed_dict={self.states_input:states,self.actions_input:actions,self.A_values:advantages})
+        super(BaseAgent, self).__init__()
 
-    def sample(self,states):
-        sess = tf.get_default_session()
-        action_probs = sess.run(self.policy,{self.states_input:states})
+        self.gamma = gamma
+        self.tau = tau
+        self.n_actions = n_actions
+        self.sess = tf.get_default_session()
+
+        self.states_ph = tf.placeholder(tf.float32, (None, states_dim),name="state")
+        self.actions_ph = tf.placeholder(tf.int32, (None),name="action")
+        self.A_values = tf.placeholder(tf.float32, (None,),name="advantage")
+
+        actions_one_hot_enc = tf.one_hot(self.actions_ph, n_actions)
+
+        self.target = tf.placeholder(tf.float32, (None, 1),name="target_state_values")
+
+        self.actor = ActorNetwork(self.states_ph,n_actions, name="actor")
+        self.critic = CriticNetwork(self.states_ph, name="critic")
+
+        if use_target:
+            self.target_critic = CriticNetwork(self.states_ph, name="target_critic")
+        else:
+            self.target_critic = None
+
+        self.actor_policy = tf.nn.softmax(self.actor.logits)
+        self.actor_neg_log_prob = tf.nn.softmax_cross_entropy_with_logits_v2(logits=self.actor.logits, labels=actions_one_hot_enc)
+
+        self.actor.loss = tf.reduce_mean(self.actor_neg_log_prob * self.A_values)
+        self.actor.train_opt = tf.train.AdamOptimizer(learning_rate=actor_lr).minimize(self.actor.loss)
+
+        self.critic.loss = tf.losses.mean_squared_error(labels=self.target, predictions=self.critic.state_value)
+        self.critic.train_opt = tf.train.AdamOptimizer(learning_rate=critic_lr).minimize(self.critic.loss)
+
+        # self.grads = tf.gradients(self.actor.loss, self.actor.weights)
+
+    def train(self,s_mb,r_mb,a_mb,d_mb,nxt_s_mb):
+
+        state_values = self.sess.run(self.critic.state_value,{self.states_ph:s_mb}).ravel()
+
+        if self.target_critic is None:
+            nxt_state_values = self.sess.run(self.critic.state_value, {self.states_ph: nxt_s_mb}).ravel()
+        else:
+            nxt_state_values = self.sess.run(self.target_critic.state_value,{self.states_ph:nxt_s_mb}).ravel()
+
+        target = r_mb + self.gamma * (1.0 - d_mb) * nxt_state_values
+
+        advantage = target - state_values
+
+        actor_loss,_ = self.sess.run([self.actor.loss,self.actor.train_opt],
+                                     {self.states_ph:s_mb,self.actions_ph:a_mb,self.A_values:advantage})
+
+        critic_loss, _, mean_pred_state_value = self.sess.run([self.critic.loss, self.critic.train_opt,self.critic.mean_state_value],
+                                       {self.states_ph: s_mb, self.target: target.reshape(-1,1)})
+
+        return actor_loss, critic_loss, mean_pred_state_value
+
+    def policy(self,states):
+        action_probs = self.sess.run(self.actor_policy,{self.states_ph:states})
         return [ np.random.choice(range(self.n_actions),p=prob) for prob in action_probs ]
 
-class CriticNetwork(object):
+    def copy_network_parameters(self,tau=None):
 
-    def __init__(self,states_dim,learning_rate=0.001,reuse=False,name="CriticNetwork"):
+        if self.target_critic is None:
+            return
 
-        with tf.variable_scope(name,reuse=reuse):
-
-            self.states_input = tf.placeholder(tf.float32,(None,states_dim))
-            self.target = tf.placeholder(tf.float32,(None,1)) 
-
-            net = tf.layers.dense(self.states_input,24,activation=tf.nn.relu,name="fcc1")            
-            self.out = tf.layers.dense(net,1,activation=None,name="out")
-
-            self.loss = tf.losses.mean_squared_error(labels=self.target,predictions=self.out)
-
-            self.train_opt = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(self.loss)
-
-        self.weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,scope=name)
-
-    def predict(self,states):
-        sess = tf.get_default_session()
-        return sess.run(self.out,{self.states_input:states})
-
-    def train(self,states,targets):
-        sess = tf.get_default_session()
-        return sess.run([self.loss,self.train_opt],{self.states_input:states,self.target:targets})
+        if tau is None:
+            tau = self.tau
 
 
+        assigns = []
 
+        for w_reference, w_target in zip(self.critic.weights, self.target_critic.weights):
 
-def copy_network_parameters(reference,target,tau=0.95):
+            val = tf.multiply(w_target, tau) + tf.multiply(w_reference, 1. - tau)
+            assigns.append(tf.assign(w_target, val, validate_shape=True))
 
-    sess = tf.get_default_session()
-    assigns = []
+        self.sess.run(assigns)
 
-    for w_reference,w_target in zip(reference.weights,target.weights):
-        assigns.append(tf.assign(w_target,tf.multiply(w_target,1.-tau) + tf.multiply(w_reference,tau),validate_shape=True))
-
-    sess.run(assigns)
-
-class EnvBatch(object):
-    def __init__(self,name,n_envs=10):
-        self.envs_ = [ gym.make(name) for i in range(n_envs)]
-
-    def reset(self):
-        return np.array([ env.reset() for env in self.envs_])
-
-    def step(self,actions):
-        self.results_ = [env.step(action) for action, env in zip(actions,self.envs_) ]
-        nxt_state, rewards, done, _ = map(np.array,zip(*self.results_))
-        for i,d in enumerate(done):
-            if d:
-                nxt_state[i,:] = self.envs_[i].reset()
-        return nxt_state, rewards, done
-
-def evaluate(agent, env, n_games=1):
-
-    game_rewards = []
-    for _ in range(n_games):
-        state = env.reset()
-        total_reward = 0
-        while True:
-            action = agent.sample([state])[0]
-            state, reward, done, _ = env.step(action)
-            total_reward += reward
-            if done: break
-        game_rewards.append(total_reward)
-    return game_rewards
-
-
-def main(max_nr_episodes,gamma,nr_envs,n_steps_update,tau,actor_learning_rate,critic_learning_rate):
+def main(args):
 
     env = gym.make("CartPole-v0")
+    n_actions = env.action_space.n
+    n_states = env.observation_space.shape[0]
+
+    n_interact_2_evaluate = 100
+    n_steps_update = args["gamma"]
+    max_nr_iter = args["max_nr_iter"]
 
     tf.reset_default_graph()
     sess = tf.InteractiveSession()
-
-    n_actions = env.action_space.n
-    n_states = env.observation_space.shape[0]
 
     with tf.variable_scope("summaries"):
 
@@ -129,76 +135,66 @@ def main(max_nr_episodes,gamma,nr_envs,n_steps_update,tau,actor_learning_rate,cr
 
         actor_loss_var = tf.Variable(0.0,name="actor_loss")
         critic_loss_var = tf.Variable(0.0,name="critic_loss")
-
-    actor = ActorNetwork(states_dim=n_states,n_actions=n_actions,learning_rate = actor_learning_rate,name="actor")
-    critic = CriticNetwork(states_dim=n_states,learning_rate = critic_learning_rate,name="critic" )
-    critic_target = CriticNetwork(states_dim=n_states,learning_rate = critic_learning_rate,name="critic_target")
+        mean_pred_state_value_var = tf.Variable(0.0,name="mean_pred_state_value")
 
 
-    rewards_summaries = [tf.summary.scalar("mean_reward",mean_reward_var),tf.summary.scalar("mean_reward_100",mean_reward_100_var)]
-    loss_summaries = [ tf.summary.scalar("actor_loss",actor_loss_var),tf.summary.scalar("critic_loss",critic_loss_var)]
+    agent = AdvantageActorCritic(n_states,n_actions,args["tau"],args["gamma"],args["actor_learning_rate"],args["critic_learning_rate"],args["use_target_critic"])
+
+    rewards_summaries = [tf.summary.scalar("mean_reward",mean_reward_var),
+                         tf.summary.scalar("mean_reward_100",mean_reward_100_var)]
+    loss_summaries = [ tf.summary.scalar("actor_loss",actor_loss_var),tf.summary.scalar("critic_loss",critic_loss_var),
+                       tf.summary.scalar("mean_pred_state_value",mean_pred_state_value_var)]
 
     sess.run(tf.global_variables_initializer())
-
-    n_interact_2_evaluate = 100
 
     run_nr = get_run_nr("runs",starts_with="A2C")
     writer = tf.summary.FileWriter("./runs/A2C_"+str(run_nr),sess.graph)
 
     merged = tf.summary.merge_all()
     loss_merged = tf.summary.merge(loss_summaries)
-    env_batch = EnvBatch("CartPole-v0",n_envs=nr_envs)
+    env_batch = EnvBatch("CartPole-v0",n_envs=args["nr_envs"])
 
-    states_batch = env_batch.reset()
+    states_mb = env_batch.reset()
 
     rewards_history = []
 
-    copy_network_parameters(critic,critic_target,tau=1.0)
+    agent.copy_network_parameters(tau=0.0)
 
-    for w_reference, w_target in zip(critic.weights,critic_target.weights):
-        sess.run(tf.assert_equal(w_target,w_reference)) 
+    for i in range(max_nr_iter):
 
+        actions_batch = agent.policy(states_mb)
 
-    for i in range(max_nr_episodes):
+        nxt_states_mb, rewards_mb, done_mb = env_batch.step(actions_batch)
 
-        actions_batch = actor.sample(states_batch)
+        critic_loss, actor_loss, mean_pred_state_value = agent.train(states_mb,rewards_mb,actions_batch,done_mb,nxt_states_mb)
 
-        nxt_states_batch, rewards_batch, done_batch = env_batch.step(actions_batch)
-
-        state_values_batch = critic.predict(states_batch).ravel()
-        nxt_state_values_batch = critic_target.predict(nxt_states_batch).ravel()
-
-        target = rewards_batch + gamma*(1-done_batch)*nxt_state_values_batch
-
-        advantage = (target - state_values_batch)
-
-        actor_loss, _ = actor.train(states_batch,actions_batch,advantage)
-        critic_loss, _ = critic.train(states_batch,target.reshape(-1,1))
-
-        states_batch = nxt_states_batch
+        states_mb = nxt_states_mb
 
         if i%500==0 or i==0:
 
-            rewards_history.append(np.mean(evaluate(actor, env, n_games=n_interact_2_evaluate)))
+            rewards_history.append(np.mean(evaluate_agent(agent, env, n_games=n_interact_2_evaluate)))
             nr_steps = min(100,len(rewards_history))
 
             summary = sess.run(merged,{critic_loss_var:critic_loss,
                 actor_loss_var:actor_loss,
                 mean_reward_var:rewards_history[-1],
-                mean_reward_100_var:np.mean(rewards_history[-nr_steps:])})
+                mean_reward_100_var:np.mean(rewards_history[-nr_steps:]),
+                                       mean_pred_state_value_var:mean_pred_state_value})
 
             writer.add_summary(summary,i)
 
         else:
-            summary = sess.run(loss_merged,{critic_loss_var:critic_loss,actor_loss_var:actor_loss})
+            summary = sess.run(loss_merged,{critic_loss_var:critic_loss,
+                                            actor_loss_var:actor_loss,
+                                            mean_pred_state_value_var:mean_pred_state_value})
             writer.add_summary(summary,i)
 
-        if rewards_history[-1]>195:
+        if rewards_history[-1] > 195:
             print "Solved!"
             break
 
         if i%n_steps_update==0:
-            copy_network_parameters(critic,critic_target)
+            agent.copy_network_parameters()
 
         writer.flush()
 
@@ -206,19 +202,19 @@ def main(max_nr_episodes,gamma,nr_envs,n_steps_update,tau,actor_learning_rate,cr
     writer.close()
 
 
-if __name__=="__main__":
-    args = argparse.ArgumentParser()
+if __name__== "__main__":
 
-    args.add_argument("--max_nr_episodes",type=int,default=100000)
-    args.add_argument("--tau",type=float,default=0.95)
+    args = argparse.ArgumentParser()
+    args.add_argument("--max_nr_iter",type=int,default=100000)
+    args.add_argument("--tau",type=float,default=0.05)
     args.add_argument("--gamma",type=float,default=0.99)
     args.add_argument("--actor_learning_rate",type=float,default=0.001)
     args.add_argument("--critic_learning_rate",type=float,default=0.001)
-    args.add_argument("--nr_envs",type=int,default=20)
+    args.add_argument("--nr_envs",type=int,default=10)
     args.add_argument("--n_steps_update",type=int,default=20)
+    args.add_argument("--use_target_critic",action="store_true")
 
-
-    main(**vars(args.parse_args()))
+    main(vars(args.parse_args()))
 
 
 
