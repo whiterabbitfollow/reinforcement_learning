@@ -77,9 +77,9 @@ def main(args):
     env = gym.make("CartPole-v0")
 
     with tf.variable_scope("summaries"):
-        mean_reward_var = tf.Variable(0.0,"mean_reward")
+        acc_reward_var = tf.Variable(0.0,"mean_reward")
         loss_var = tf.Variable(0.0,"loss")
-        summary_list = [tf.summary.scalar("mean_reward", mean_reward_var),tf.summary.scalar("loss_var", loss_var)]
+        summary_list = [tf.summary.scalar("mean_reward", acc_reward_var),tf.summary.scalar("loss_var", loss_var)]
 
     agent = PolicyGradientAgent(env.observation_space.shape[0],env.action_space.n,args["learning_rate"],args["entropy_coeff"])
 
@@ -125,7 +125,7 @@ def main(args):
 
         mean_reward = np.sum(all_rewards)/args["nr_envs"]
 
-        summary = sess.run(merged,feed_dict={mean_reward_var:mean_reward,loss_var:loss})
+        summary = sess.run(merged,feed_dict={acc_reward_var:mean_reward,loss_var:loss})
 
         writer.add_summary(summary,i)
         writer.flush()

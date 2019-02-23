@@ -130,7 +130,7 @@ def main(args):
 
     with tf.variable_scope("summaries"):
 
-        mean_reward_var = tf.Variable(0.0,name="mean_reward")
+        acc_reward_var = tf.Variable(0.0,name="mean_reward")
         mean_reward_100_var = tf.Variable(0.0,name="mean_reward_100")
 
         actor_loss_var = tf.Variable(0.0,name="actor_loss")
@@ -140,7 +140,7 @@ def main(args):
 
     agent = AdvantageActorCritic(n_states,n_actions,args["tau"],args["gamma"],args["actor_learning_rate"],args["critic_learning_rate"],args["use_target_critic"])
 
-    rewards_summaries = [tf.summary.scalar("mean_reward",mean_reward_var),
+    rewards_summaries = [tf.summary.scalar("mean_reward",acc_reward_var),
                          tf.summary.scalar("mean_reward_100",mean_reward_100_var)]
     loss_summaries = [ tf.summary.scalar("actor_loss",actor_loss_var),tf.summary.scalar("critic_loss",critic_loss_var),
                        tf.summary.scalar("mean_pred_state_value",mean_pred_state_value_var)]
@@ -177,7 +177,7 @@ def main(args):
 
             summary = sess.run(merged,{critic_loss_var:critic_loss,
                 actor_loss_var:actor_loss,
-                mean_reward_var:rewards_history[-1],
+                acc_reward_var:rewards_history[-1],
                 mean_reward_100_var:np.mean(rewards_history[-nr_steps:]),
                                        mean_pred_state_value_var:mean_pred_state_value})
 
