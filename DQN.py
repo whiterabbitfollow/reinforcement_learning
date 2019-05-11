@@ -106,7 +106,7 @@ class DQN(BaseDeepAgent):
 
         self.s_dim = env.observation_space.shape
 
-        self.eps_decay = 0.985
+        self.eps_decay = 0.991
         self.eps_min = 0.05
 
         self.gamma = gamma
@@ -119,7 +119,9 @@ class DQN(BaseDeepAgent):
         self._init_ph()
         self._init_net()
         self._init_updater_ph()
+        self._init_hardcopy_ph()
         self._init_losses(lr)
+        self._init_tb_summaries()
 
     def _init_ph(self):
 
@@ -129,7 +131,7 @@ class DQN(BaseDeepAgent):
         self.action_ph = tf.placeholder(tf.int32, (None,), "action")
         self.is_done_ph = tf.placeholder(tf.float32, (None,), "is_done")
         self.target_q_ph = tf.placeholder(tf.float32, (None,), "is_done")
-        self._init_tb_summaries()
+
 
 
     def _init_net(self):
@@ -171,6 +173,10 @@ class DQN(BaseDeepAgent):
         self.update_target_network_params = [self.target_net.weights[i].assign(tf.multiply(self.learning_net.weights[i], self.tau)
                                                                                 + tf.multiply(self.target_net.weights[i], 1. - self.tau))
                                              for i in range(len(self.target_net.weights))]
+
+
+    def _init_hardcopy_ph(self):
+        self.copy_target_network_params = [self.target_net.weights[i].assign(self.learning_net.weights[i]) for i in range(len(self.target_net.weights))]
 
     def policy(self, state,greedy=False):
 
@@ -218,7 +224,10 @@ class DQN(BaseDeepAgent):
     def copy_network_parameters(self):
         self.sess.run(self.update_target_network_params)
 
-    def _run_episode(self, max_nr_steps, train, verbosity=0):
+    def hard_copy_network_parameters(self):
+        self.sess.run(self.copy_target_network_params)
+
+    def _run_episode(self, max_nr_steps, train=False):
 
         env = self.env
         batch_size = self.batch_size
@@ -255,8 +264,6 @@ class DQN(BaseDeepAgent):
 
                 self.writer.flush()
 
-
-
                 self.copy_network_parameters()  # TODO: all the time?
 
             s = s_nxt
@@ -274,8 +281,10 @@ class DQN(BaseDeepAgent):
 
         time_start = time.time()
 
+        self.hard_copy_network_parameters()
+
         while not self.buff.have_stored_enough():
-            _, _ = self._run_episode(max_nr_steps, verbosity)
+            _, _ = self._run_episode(max_nr_steps, train=False)
 
             if verbosity > 1:
                 print "Buffer size %i, init ratio %f" % (self.buff.size,self.buff.init_ratio() )
@@ -287,11 +296,11 @@ class DQN(BaseDeepAgent):
 
         for i_ep in range(n_episodes):
 
-            ep_reward, i_step = self._run_episode(max_nr_steps,verbosity)
+            ep_reward, i_step = self._run_episode(max_nr_steps,train=True)
 
             if eval and (i_ep % eval_freq == 0):
 
-                eval_rewards = np.mean(evaluate_agent(self, self.env, n_games=n_interact_2_evaluate, greedy=True))
+                eval_rewards = np.mean(evaluate_agent(self, self.env, n_games=n_interact_2_evaluate, greedy=False, verbosity=verbosity,render=False))
 
                 summary = self.sess.run(self.eval_summary, {self.eval_reward_var: eval_rewards})
 
@@ -345,12 +354,7 @@ def main():
 
     sess.run(tf.global_variables_initializer())
 
-    # for chk_grad in tf.gradients(agent.target_q_values, agent.learning_net.weights):
-    #     error_msg = "Reference q-values should have no gradient w.r.t. agent weights. Make sure you used target_network qvalues! "
-    #     error_msg += "If you know what you're doing, ignore this assert."
-    #     assert chk_grad is None or np.allclose(sess.run(chk_grad), sess.run(chk_grad * 0)), error_msg
-
-    agent.run_episodes(1000, verbosity=1, eval=False)
+    agent.run_episodes(1000, verbosity=1, eval=True, eval_freq=10, n_interact_2_evaluate=3)
 
     agent.close()
 

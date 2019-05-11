@@ -297,7 +297,7 @@ class PreprocessAtari(ObservationWrapper):
         self.img_size = (64, 64)
         self.observation_space = Box(0.0, 1.0, (self.img_size[0], self.img_size[1], 1))
 
-    def _observation(self, img):
+    def observation(self, img):
 
         """what happens to each observation"""
 
@@ -308,10 +308,11 @@ class PreprocessAtari(ObservationWrapper):
         # resize image
         img = cv2.resize(img, self.img_size)
 
-        # grayscale
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
-        img = img[:,:,np.newaxis]
-        # img = img.mean(-1, keepdims=True)
+        # # grayscale
+        # img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        # img = img[:,:,np.newaxis]
+        #
+        img = img.mean(-1, keepdims=True)
         # convert pixels to range (0,1)
         #         img = img/255
         img = img.astype('float32') / 255.
@@ -330,20 +331,51 @@ if __name__ == "__main__":
     env = FrameBuffer(env)
 
     s = env.reset()
+    #
+    #
+    #
+    #
+    # for i in range(10000):
+    #
+    #     # s = s[39:-16, :, :]
+    #
+    #     plt.imshow(s[:,:,0],cmap="gray")
+    #     plt.pause(0.01)
+    #
+    #     s,_,_,_ = env.step(env.action_space.sample())
+    #
+    #     # env.render()
+    #     # time.sleep(0.1)
+    is_done = False
+    while not is_done:
 
+        obs, reward, is_done, _ = env.step(env.action_space.sample())
 
+        print reward, is_done
 
-
-    for i in range(10000):
-
-        # s = s[39:-16, :, :]
-
-        plt.imshow(s[:,:,0],cmap="gray")
+        plt.figure(1)
+        plt.clf()
+        plt.imshow(env.render("rgb_array"))  # ,cmap="gray")
         plt.pause(0.01)
 
-        s,_,_,_ = env.step(env.action_space.sample())
+    # obs, _, _, _ = env.step(env.action_space.sample())
+    # obs, _, _, _ = env.step(env.action_space.sample())
+    # obs, _, _, _ = env.step(env.action_space.sample())
+    # obs, _, _, _ = env.step(env.action_space.sample())
 
-        # env.render()
-        # time.sleep(0.1)
+    # plt.title("Game image")
+    #
+
+    state_dim = env.observation_space.shape
+    plt.figure(1)
+    plt.title("Agent observation (4 frames left to right)")
+    plt.imshow(obs.transpose([0, 2, 1]).reshape([state_dim[0], -1])) # ,cmap="gray")
+    plt.show()
+
+    plt.figure(2)
+    plt.title("Agent observation (4 frames left to right)")
+    plt.imshow(env.render("rgb_array"))  # ,cmap="gray")
+    plt.show()
+
 
 
