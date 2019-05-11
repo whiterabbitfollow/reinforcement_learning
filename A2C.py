@@ -9,7 +9,7 @@ Created on Sat Dec 29 10:43:42 2018
 import gym 
 import tensorflow as tf
 import numpy as np
-from utils import evaluate_agent, BaseDeepAgent, EnvBatch, BaseActor
+from utils.utils import evaluate_agent, BaseDeepAgent, EnvBatch, BaseActor
 import argparse
 
 class ActorNetwork(BaseActor):
@@ -274,10 +274,10 @@ def main(args):
 if __name__ == "__main__":
 
     args = argparse.ArgumentParser()
-    args.add_argument("--env", type=str, default="Pendulum-v0")
+    args.add_argument("--env", type=str, default="MountainCar-v0")
     args.add_argument("--max_nr_iter",type=int,default=100000)
     args.add_argument("--verbosity", type=int, default=1)
-    args.add_argument("--n_interact_2_evaluate", type=int, default=10)
+    args.add_argument("--n_interact_2_evaluate", type=int, default=100)
     args.add_argument("--eval_freq", type=int, default=100)
     args.add_argument("--tau",type=float,default=0.05)
     args.add_argument("--gamma",type=float,default=0.99)

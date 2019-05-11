@@ -8,7 +8,7 @@ Created on Sat Dec 29 10:43:42 2018
 import tensorflow as tf
 import gym
 import numpy as np
-from utils import evaluate_agent, BaseActor, BaseDeepAgent, BaseCritic
+from utils.utils import evaluate_agent, BaseActor, BaseDeepAgent, BaseCritic
 import argparse
 import time
 

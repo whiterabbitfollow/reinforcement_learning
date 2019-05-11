@@ -6,7 +6,7 @@ Created on Sat Apr 27 22:21:25 2019
 @author: x
 """
 
-from utils import BaseDeepAgent, evaluate_agent
+from utils.utils import BaseDeepAgent, evaluate_agent
 import numpy as np
 import tensorflow as tf
 import gym
@@ -206,7 +206,7 @@ if __name__=="__main__":
     args.add_argument("--eval_freq", type=int, default=10)
     args.add_argument("--n_interact_2_evaluate", type=int, default=100)
     args.add_argument("--n_episodes", type=int, default=10)
-    args.add_argument("--env", type=str, default="CartPole-v0")
+    args.add_argument("--env", type=str, default="MountainCar-v0")
     args.add_argument("--n_epochs", type=int, default=1000)
     args.add_argument("--num_layers", type=int, default=2)
 

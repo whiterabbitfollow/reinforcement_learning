@@ -4,7 +4,7 @@ import tensorflow as tf
 import numpy as np
 import gym
 import argparse
-from utils import evaluate_agent, BaseDeepAgent, compute_discounted_return
+from utils.utils import evaluate_agent, BaseDeepAgent, compute_discounted_return
 
 class PolicyGradientAgent(BaseDeepAgent):
 
@@ -184,11 +184,11 @@ if __name__=="__main__":
 
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--env", default="Pendulum-v0", help="", type=str)
+    parser.add_argument("--env", default="MountainCar-v0", help="", type=str)
     parser.add_argument("--learning_rate",default=0.001,help="Learning rate",type=float)
     parser.add_argument("--gamma",default=0.95,help="Discounted reward coefficient",type=float)
     parser.add_argument("--nr_eps",default=4,help="Number episodes to get data from",type=int)
-    parser.add_argument("--entropy_coeff",default=0.001,help="Entropy scaling",type=float)
+    parser.add_argument("--entropy_coeff",default=1e-4,help="Entropy scaling",type=float)
     parser.add_argument("--max_iter",default=10000,help="Maximum number of iterations",type=int)
     parser.add_argument("--baseline",help="Use baseline",action="store_true")
 
