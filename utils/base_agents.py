@@ -31,6 +31,8 @@ class BaseDeepAgent(object):
         self.a_dim = None
         self.is_discrete = False
 
+        path_2_main = "/home/x/Documents/reinforcement_learning/open_ai_gym/tmp/reinforcement_learning" # TODO fix hardcoded path
+
         if isinstance(env.action_space, gym.spaces.Discrete):
             self.n_actions = env.action_space.n
             self.is_discrete = True
@@ -41,10 +43,9 @@ class BaseDeepAgent(object):
         self.s_dim = env.observation_space.shape[0]
 
         if log_data:
-
             self.env_name = self.env.spec.id
-            run_nr = get_run_nr("runs_" + self.env_name, starts_with=str(self))
-            self.writer = tf.summary.FileWriter("runs_%s/%s_%i" % (self.env_name, str(self),run_nr), sess.graph)
+            run_nr = get_run_nr(os.path.join(path_2_main,"runs_" + self.env_name), starts_with=str(self))
+            self.writer = tf.summary.FileWriter(os.path.join(path_2_main,"runs_%s/%s_%i" % (self.env_name, str(self),run_nr)), sess.graph)
 
     @abstractmethod
     def _init_tb_summaries(self):

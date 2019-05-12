@@ -3,7 +3,9 @@
 import tensorflow as tf
 import numpy as np
 import gym
-from utils.utils import BaseDeepAgent, PrioritizedReplayBuffer, OrnsteinUhlenbeckActionNoise, evaluate_agent
+from utils.base_agents import BaseDeepAgent
+from utils.other import OrnsteinUhlenbeckActionNoise, evaluate_agent
+from utils.buffers import ReplayBuffer
 import argparse
 
 class ActorNetwork():
@@ -44,17 +46,17 @@ class CriticNetwork():
 
         self.weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=name)
 
-class PDDPG(BaseDeepAgent):
+class DDPG(BaseDeepAgent):
 
     def __init__(self, env,buffer_size, batch_size, actor_lr, critic_lr, tau, gamma):
 
         assert abs(env.action_space.low) == abs(env.action_space.high), "Must have symmetric action bound"
         sess = tf.get_default_session()
 
-        super(PDDPG, self).__init__(env, sess)
+        super(DDPG, self).__init__(env, sess)
 
         self.batch_size = batch_size
-        self.buff = PrioritizedReplayBuffer(buffer_size)
+        self.buff = ReplayBuffer(buffer_size)
 
         self.gamma = gamma
         self.tau = tau
@@ -73,7 +75,6 @@ class PDDPG(BaseDeepAgent):
         self.actions_ph = tf.placeholder(tf.float32, (None, self.a_dim), name="action")
         self.action_gradients_ph = tf.placeholder(tf.float32, (None, 1), "action_grads")
         self.target_Q_values = tf.placeholder(tf.float32, (None, 1), "Q_target")
-        self.IS_weights = tf.placeholder(tf.float32, (None,), "IS_weights")
 
     def _init_nets(self):
 
@@ -92,14 +93,7 @@ class PDDPG(BaseDeepAgent):
 
         self.action_gradients = tf.gradients(self.critic.Q_value, self.actions_ph)
 
-        self.critic.abs_target_loss = tf.math.abs(self.target_Q_values-self.critic.Q_value)
-
-        # hmm divide by batch size? ---
-
-        weighted_diff = tf.multiply(self.critic.abs_target_loss, self.IS_weights)
-
-        self.critic.loss = tf.reduce_mean(tf.square(weighted_diff))
-
+        self.critic.loss = tf.losses.mean_squared_error(self.target_Q_values, self.critic.Q_value)
         self.critic.train_opt = tf.train.AdamOptimizer(learning_rate=critic_lr).minimize(self.critic.loss)
 
     def _init_updater_ph(self):
@@ -147,27 +141,19 @@ class PDDPG(BaseDeepAgent):
     def target_Q_value(self, state, action):
         return self.sess.run(self.target_critic.Q_value, feed_dict={self.states_ph: state,self.actions_ph:action})
 
-    def train(self, state_mb, action_mb, reward_mb, done_mb, nxt_state_mb, IS_W_mb):
+    def train(self, state_mb, action_mb, reward_mb, done_mb, nxt_state_mb):
 
         nxt_action_mb = self.target_policy(nxt_state_mb)
 
         nxt_Q_value = self.target_Q_value(nxt_state_mb,nxt_action_mb)
 
-        target_Q_value = reward_mb + self.gamma*(1.0-done_mb) * nxt_Q_value.ravel()
+        target_Q_value = reward_mb + self.gamma*(1.0-done_mb)*nxt_Q_value.ravel()
 
-        # IS_W_mb what to do with this.... I don't know...
-
-        critic_loss, _, action_grads, Q_values, abs_target_loss = self.sess.run([self.critic.loss,
-                                                                                 self.critic.train_opt,
-                                                                                 self.action_gradients,
-                                                                                 self.critic.Q_value,
-                                                                                 self.critic.abs_target_loss
-                                                                                 ],
-                                                                                feed_dict={self.target_Q_values:target_Q_value.reshape(-1,1),
-                                                                                           self.states_ph: state_mb,
-                                                                                           self.actions_ph: action_mb,
-                                                                                           self.IS_weights: IS_W_mb
-                                                                                           })
+        critic_loss, _, action_grads, Q_values = self.sess.run([self.critic.loss, self.critic.train_opt, self.action_gradients,
+                                                      self.critic.Q_value],
+                                                     feed_dict={self.target_Q_values:target_Q_value.reshape(-1,1),
+                                                                self.states_ph: state_mb,
+                                                                self.actions_ph: action_mb})
 
         actions = self.policy(state_mb) # should be same as action_mb??
         action_grads = self.action_grads(state_mb, actions)
@@ -176,7 +162,7 @@ class PDDPG(BaseDeepAgent):
         actor_loss, _ = self.sess.run([self.actor.loss,self.actor.train_opt],
                                       feed_dict={self.states_ph:state_mb,self.action_gradients_ph:action_grads[0]})
 
-        return critic_loss, actor_loss, action_grads[0], target_Q_value, Q_values, abs_target_loss
+        return critic_loss, actor_loss, action_grads[0], target_Q_value, Q_values
 
     def copy_network_parameters(self):
         self.sess.run(self.update_target_network_params_actor)
@@ -199,17 +185,15 @@ class PDDPG(BaseDeepAgent):
 
             s_nxt, r, done, _ = env.step(a)
 
-            buff.store(s.ravel(), a, r, done, s_nxt.ravel())
+            buff.add(s.ravel(), a, r, done, s_nxt.ravel())
 
-            if buff.have_stored_enough():
+            if buff.size >= batch_size:
 
-                state_mb, action_mb, reward_mb, done_mb, nxt_state_mb, IS_W_mb, idx_mb = buff.sample(batch_size)
+                state_mb, action_mb, reward_mb, done_mb, nxt_state_mb = buff.sample(batch_size)
 
-                logs = self.train(state_mb, action_mb, reward_mb, done_mb, nxt_state_mb, IS_W_mb)
+                logs = self.train(state_mb, action_mb, reward_mb, done_mb, nxt_state_mb)
 
-                critic_loss, actor_loss, action_grads, target_Q_values, Q_values, abs_target_loss = logs
-
-                buff.batch_update(idx_mb,abs_target_loss)
+                critic_loss, actor_loss, action_grads, target_Q_values, Q_values = logs
 
                 f_dict = {self.critic_loss_var: critic_loss,
                           self.mean_Q_var: np.mean(Q_values), self.max_Q_var: np.max(Q_values),
@@ -227,7 +211,6 @@ class PDDPG(BaseDeepAgent):
             acc_reward += r
 
             self.nr_env_interactions += 1
-
             i_step += 1
 
         return acc_reward
@@ -250,11 +233,11 @@ class PDDPG(BaseDeepAgent):
                 self.writer.flush()
 
             if verbosity > 0:
-                print "Episode: %i reward: %f nr_steps: %i eval_reward: %f Buffer size: %i have enough: %s" % (i_ep, ep_reward, self.nr_env_interactions,np.mean(eval_rewards),self.buff.size,str(self.buff.have_stored_enough()))
+                print "Episode: %i reward: %f nr_steps: %i eval_reward: %f" % (i_ep, ep_reward, self.nr_env_interactions,np.mean(eval_rewards))
 
 
     def __repr__(self):
-        return "PDDPG"
+        return "DDPG"
 
 def main(args):
 
@@ -264,7 +247,7 @@ def main(args):
 
     sess = tf.InteractiveSession()
 
-    agent = PDDPG(env, args["buffer_size"], args["batch_size"], args["actor_learning_rate"], args["critic_learning_rate"], args["tau"], args["gamma"])
+    agent = DDPG(env, args["buffer_size"], args["batch_size"], args["actor_learning_rate"], args["critic_learning_rate"], args["tau"], args["gamma"])
 
     sess.run(tf.global_variables_initializer())
 

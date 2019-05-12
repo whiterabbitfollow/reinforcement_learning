@@ -8,49 +8,32 @@ from utils.base_agents import BaseDeepAgent
 from utils.buffers import ReplayBuffer, FrameBuffer, PreprocessAtari
 from utils.other import evaluate_agent
 
-
 class ConvNet(object):
 
     def __init__(self, name, state_ph, n_actions):
 
         with tf.variable_scope(name):
 
-            """
-            First convnet:
-            CNN
-            ELU
-            """
-            # Input is 110x84x4
             self.conv1 = tf.layers.conv2d(inputs=state_ph,
-                                          filters=32,
-                                          kernel_size=[8, 8],
-                                          strides=[4, 4],
+                                          filters=16,
+                                          kernel_size=[3, 3],
+                                          strides=[2, 2],
                                           padding="VALID",
                                           kernel_initializer=tf.contrib.layers.xavier_initializer_conv2d(),
                                           name="conv1")
 
-            self.conv1_out = tf.nn.elu(self.conv1, name="conv1_out")
+            self.conv1_out = tf.nn.relu(self.conv1, name="conv1_out")
 
-            """
-            Second convnet:
-            CNN
-            ELU
-            """
             self.conv2 = tf.layers.conv2d(inputs=self.conv1_out,
-                                          filters=64,
-                                          kernel_size=[4, 4],
+                                          filters=32,
+                                          kernel_size=[3, 3],
                                           strides=[2, 2],
                                           padding="VALID",
                                           kernel_initializer=tf.contrib.layers.xavier_initializer_conv2d(),
                                           name="conv2")
 
-            self.conv2_out = tf.nn.elu(self.conv2, name="conv2_out")
+            self.conv2_out = tf.nn.relu(self.conv2, name="conv2_out")
 
-            """
-            Third convnet:
-            CNN
-            ELU
-            """
             self.conv3 = tf.layers.conv2d(inputs=self.conv2_out,
                                           filters=64,
                                           kernel_size=[3, 3],
@@ -64,17 +47,14 @@ class ConvNet(object):
             self.flatten = tf.contrib.layers.flatten(self.conv3_out)
 
             self.fc = tf.layers.dense(inputs=self.flatten,
-                                      units=512,
-                                      activation=tf.nn.elu,
+                                      units=256,
+                                      activation=tf.nn.relu,
                                       kernel_initializer=tf.contrib.layers.xavier_initializer(),
                                       name="fc1")
 
             self.output = tf.layers.dense(inputs=self.fc, kernel_initializer=tf.contrib.layers.xavier_initializer(), units=n_actions, activation=None)
 
         self.weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, name)
-
-
-
 
 class DenseNet(object):
 
@@ -100,14 +80,14 @@ class DenseNet(object):
 
 class DQN(BaseDeepAgent):
 
-    def __init__(self, env, sess, eps, max_buffer_size, gamma, lr, tau, batch_size):
+    def __init__(self, env, sess, eps, max_buffer_size, gamma, lr, tau, batch_size, use_conv_net=False, eps_decay =0.99, eps_min=0.05):
 
-        super(DQN,self).__init__(env,sess)
+        super(DQN,self).__init__(env, sess)
 
         self.s_dim = env.observation_space.shape
 
-        self.eps_decay = 0.991
-        self.eps_min = 0.05
+        self.eps_decay = eps_decay
+        self.eps_min = eps_min
 
         self.gamma = gamma
         self.eps = eps
@@ -117,7 +97,7 @@ class DQN(BaseDeepAgent):
         self.buff = ReplayBuffer(max_buffer_size=max_buffer_size)
 
         self._init_ph()
-        self._init_net()
+        self._init_net(use_conv_net)
         self._init_updater_ph()
         self._init_hardcopy_ph()
         self._init_losses(lr)
@@ -125,7 +105,7 @@ class DQN(BaseDeepAgent):
 
     def _init_ph(self):
 
-        self.state_ph = tf.placeholder(tf.float32,(None,) +self.s_dim, "state")
+        self.state_ph = tf.placeholder(tf.float32,(None,) + self.s_dim, "state")
         self.nxt_state_ph = tf.placeholder(tf.float32, (None,) + self.s_dim, "nxt_state")
         self.reward_ph = tf.placeholder(tf.float32, (None,), "reward")
         self.action_ph = tf.placeholder(tf.int32, (None,), "action")
@@ -133,14 +113,17 @@ class DQN(BaseDeepAgent):
         self.target_q_ph = tf.placeholder(tf.float32, (None,), "is_done")
 
 
+    def _init_net(self,use_conv_net):
 
-    def _init_net(self):
+        if use_conv_net:
 
-        self.learning_net = ConvNet("learner", self.state_ph, self.n_actions)
-        self.target_net = ConvNet("target", self.nxt_state_ph, self.n_actions)
+            self.learning_net = ConvNet("learner", self.state_ph, self.n_actions)
+            self.target_net = ConvNet("target", self.nxt_state_ph, self.n_actions)
 
-        # self.learning_net = DenseNet("learner", self.state_ph, self.n_actions)
-        # self.target_net = DenseNet("target", self.nxt_state_ph, self.n_actions)
+        else:
+
+            self.learning_net = DenseNet("learner", self.state_ph, self.n_actions)
+            self.target_net = DenseNet("target", self.nxt_state_ph, self.n_actions)
 
     def _init_losses(self, lr):
 
@@ -176,6 +159,7 @@ class DQN(BaseDeepAgent):
 
 
     def _init_hardcopy_ph(self):
+        # seems to be needed in beginning..
         self.copy_target_network_params = [self.target_net.weights[i].assign(self.learning_net.weights[i]) for i in range(len(self.target_net.weights))]
 
     def policy(self, state,greedy=False):
@@ -264,7 +248,10 @@ class DQN(BaseDeepAgent):
 
                 self.writer.flush()
 
-                self.copy_network_parameters()  # TODO: all the time?
+                # self.copy_network_parameters()  # TODO: all the time?
+
+                if self.nr_env_interactions%500==0:
+                    self.hard_copy_network_parameters()
 
             s = s_nxt
             acc_reward += r
@@ -281,13 +268,13 @@ class DQN(BaseDeepAgent):
 
         time_start = time.time()
 
-        self.hard_copy_network_parameters()
+        self.hard_copy_network_parameters() # NEW...
 
         while not self.buff.have_stored_enough():
             _, _ = self._run_episode(max_nr_steps, train=False)
 
             if verbosity > 1:
-                print "Buffer size %i, init ratio %f" % (self.buff.size,self.buff.init_ratio() )
+                print "Buffer size %i, init ratio %f" % (self.buff.size,self.buff.init_ratio())
 
         if verbosity > 0:
             print "Buffer initialized in %f s with %i samples"%(time.time()-time_start,self.buff.size)
@@ -337,20 +324,18 @@ def main():
 
     # env = gym.make("PongNoFrameskip-v4")
     env = gym.make("BreakoutDeterministic-v4")
-    #
 
     env = PreprocessAtari(env)
     env = FrameBuffer(env)
 
     # env = gym.make("CartPole-v0")
     # env = gym.make("MountainCar-v0")
-    #
 
     tf.reset_default_graph()
 
     sess = tf.InteractiveSession()
 
-    agent = DQN(env, sess, eps=1.0, max_buffer_size=100000, gamma=0.99, lr=1e-4, tau=0.01, batch_size=32)
+    agent = DQN(env, sess, eps=1.0, max_buffer_size=100000, gamma=0.99, lr=1e-4, tau=0.01, batch_size=32,use_conv_net=True)
 
     sess.run(tf.global_variables_initializer())
 
@@ -361,6 +346,3 @@ def main():
 if __name__=="__main__":
 
     main()
-
-
-

@@ -291,6 +291,7 @@ class FrameBuffer(Wrapper):
 class PreprocessAtari(ObservationWrapper):
 
     def __init__(self, env):
+
         """A gym wrapper that crops, scales image into the desired shapes and optionally grayscales it."""
         ObservationWrapper.__init__(self, env)
 
@@ -331,6 +332,7 @@ if __name__ == "__main__":
     env = FrameBuffer(env)
 
     s = env.reset()
+
     #
     #
     #

@@ -4,7 +4,8 @@ import tensorflow as tf
 import numpy as np
 import gym
 import argparse
-from utils.utils import evaluate_agent, BaseDeepAgent, compute_discounted_return
+from utils.base_agents import BaseDeepAgent
+from utils.other import  evaluate_agent, compute_discounted_return
 
 class PolicyGradientAgent(BaseDeepAgent):
 

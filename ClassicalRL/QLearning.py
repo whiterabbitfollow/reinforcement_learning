@@ -6,23 +6,13 @@ Created on Sat Apr 27 22:21:25 2019
 @author: x
 """
 
-from utils.utils import BaseDeepAgent, evaluate_agent
+from utils.base_agents import BaseDeepAgent
+from utils.other import evaluate_agent
+
 import numpy as np
 import tensorflow as tf
 import gym
 import argparse
-
-with tf.name_scope("summeries"):
-    reward_var = tf.Variable(0.0, "reward_var")
-    mean_loss_var = tf.Variable(0.0, "mean_loss_var")
-    eps_var = tf.Variable(0.0, "eps_var")
-
-    reward_summery = tf.summary.scalar("reward", reward_var)
-    mean_loss_summery = tf.summary.scalar("mean_loss", mean_loss_var)
-    eps_summery = tf.summary.scalar("eps", eps_var)
-
-    merge = tf.summary.merge_all()
-
 
 class QLearning(BaseDeepAgent):
 
