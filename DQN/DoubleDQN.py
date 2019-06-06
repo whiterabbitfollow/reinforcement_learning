@@ -3,7 +3,7 @@ import tensorflow as tf
 
 class DoubleDQN(DQN):
 
-    def __init__(self, env, sess, eps, max_buffer_size, gamma, lr, tau, batch_size, use_conv_net=False, eps_decay =0.99, eps_min=0.05):
+    def __init__(self, env, sess, eps, max_buffer_size, gamma, lr, tau, batch_size, use_conv_net=False, eps_decay=0.99, eps_min=0.05):
 
         super(DoubleDQN,self).__init__(env, sess, eps, max_buffer_size, gamma, lr, tau, batch_size, use_conv_net, eps_decay, eps_min)
 

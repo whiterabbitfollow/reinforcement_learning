@@ -5,8 +5,51 @@ import gym
 import time
 
 from utils.base_agents import BaseDeepAgent
-from utils.buffers import ReplayBuffer, FrameBuffer, PreprocessAtari
+from utils.buffers import ReplayBuffer
+from utils.preprocessing import FrameBuffer, PreprocessAtari, ProcessFrame84
 from utils.other import evaluate_agent
+
+class ConvNetOrg(object):
+
+    def __init__(self, name, state_ph, n_actions):
+
+        # from paper: "Playing Atari with Deep Reinforcement Learning"
+
+        with tf.variable_scope(name):
+
+            self.conv1 = tf.layers.conv2d(inputs=state_ph,
+                                          filters=16,
+                                          kernel_size=[8, 8],
+                                          strides=[4, 4],
+                                          padding="VALID",
+                                          kernel_initializer=tf.variance_scaling_initializer(scale=2),
+                                          name="conv1")
+
+            self.conv1_out = tf.nn.relu(self.conv1, name="conv1_out")
+
+            self.conv2 = tf.layers.conv2d(inputs=self.conv1_out,
+                                          filters=32,
+                                          kernel_size=[4, 4],
+                                          strides=[2, 2],
+                                          padding="VALID",
+                                          kernel_initializer=tf.variance_scaling_initializer(scale=2),
+                                          name="conv2")
+
+            self.conv2_out = tf.nn.relu(self.conv2, name="conv2_out")
+
+            self.flatten = tf.contrib.layers.flatten(self.conv2_out)
+
+            self.fc = tf.layers.dense(inputs=self.flatten,
+                                      units=256,
+                                      activation=tf.nn.relu,
+                                      kernel_initializer=tf.variance_scaling_initializer(scale=2),
+                                      name="fc1")
+
+            self.output = tf.layers.dense(inputs=self.fc, kernel_initializer=tf.variance_scaling_initializer(scale=2), units=n_actions, activation=None)
+
+        self.weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, name)
+
+
 
 class ConvNet(object):
 
@@ -15,44 +58,47 @@ class ConvNet(object):
         with tf.variable_scope(name):
 
             self.conv1 = tf.layers.conv2d(inputs=state_ph,
-                                          filters=16,
-                                          kernel_size=[3, 3],
-                                          strides=[2, 2],
+                                          filters=32,
+                                          kernel_size=[8, 8],
+                                          strides=[4, 4],
                                           padding="VALID",
-                                          kernel_initializer=tf.contrib.layers.xavier_initializer_conv2d(),
+                                          use_bias=False,
+                                          activation=tf.nn.relu,
+                                          kernel_initializer=tf.variance_scaling_initializer(scale=2),
                                           name="conv1")
 
-            self.conv1_out = tf.nn.relu(self.conv1, name="conv1_out")
-
-            self.conv2 = tf.layers.conv2d(inputs=self.conv1_out,
-                                          filters=32,
-                                          kernel_size=[3, 3],
+            self.conv2 = tf.layers.conv2d(inputs=self.conv1,
+                                          filters=64,
+                                          kernel_size=[4, 4],
                                           strides=[2, 2],
                                           padding="VALID",
-                                          kernel_initializer=tf.contrib.layers.xavier_initializer_conv2d(),
+                                          kernel_initializer=tf.variance_scaling_initializer(scale=2),
+                                          use_bias=False,
+                                          activation=tf.nn.relu,
                                           name="conv2")
 
-            self.conv2_out = tf.nn.relu(self.conv2, name="conv2_out")
-
-            self.conv3 = tf.layers.conv2d(inputs=self.conv2_out,
+            self.conv3 = tf.layers.conv2d(inputs=self.conv2,
                                           filters=64,
                                           kernel_size=[3, 3],
-                                          strides=[2, 2],
+                                          strides=[1, 1],
                                           padding="VALID",
-                                          kernel_initializer=tf.contrib.layers.xavier_initializer_conv2d(),
+                                          use_bias=False,
+                                          activation=tf.nn.relu,
+                                          kernel_initializer=tf.variance_scaling_initializer(scale=2),
                                           name="conv3")
 
-            self.conv3_out = tf.nn.elu(self.conv3, name="conv3_out")
+            self.flatten = tf.contrib.layers.flatten(self.conv3)
 
-            self.flatten = tf.contrib.layers.flatten(self.conv3_out)
+            # tf.keras.initializers.VarianceScaling
 
             self.fc = tf.layers.dense(inputs=self.flatten,
-                                      units=256,
+                                      units=512,
                                       activation=tf.nn.relu,
-                                      kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                                      kernel_initializer=tf.variance_scaling_initializer(scale=2),
                                       name="fc1")
 
-            self.output = tf.layers.dense(inputs=self.fc, kernel_initializer=tf.contrib.layers.xavier_initializer(), units=n_actions, activation=None)
+            self.output = tf.layers.dense(inputs=self.fc, kernel_initializer=tf.variance_scaling_initializer(scale=2),
+                                          units=n_actions, activation=None)
 
         self.weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, name)
 
@@ -65,36 +111,36 @@ class DenseNet(object):
             out = tf.layers.dense(inputs=state_ph,
                                       units=100,
                                       activation=tf.nn.relu,
-                                      kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                                      kernel_initializer=tf.variance_scaling_initializer(scale=2),
                                       name="fc1")
 
             out = tf.layers.dense(inputs=out,
                                       units=100,
                                       activation=tf.nn.relu,
-                                      kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                                      kernel_initializer=tf.variance_scaling_initializer(scale=2),
                                       name="fc2")
 
-            self.output = tf.layers.dense(inputs=out, kernel_initializer=tf.contrib.layers.xavier_initializer(), units=n_actions, activation=None)
+            self.output = tf.layers.dense(inputs=out, kernel_initializer=tf.variance_scaling_initializer(scale=2), units=n_actions, activation=None)
 
         self.weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, name)
 
 class DQN(BaseDeepAgent):
 
-    def __init__(self, env, sess, eps, max_buffer_size, gamma, lr, tau, batch_size, use_conv_net=False, eps_decay =0.99, eps_min=0.05):
+    def __init__(self, env, sess, eps, eps_decay_func, buff_obj, gamma, tau, max_nr_env_interactions, use_conv_net=False, lr=0.0000625):
+
 
         super(DQN,self).__init__(env, sess)
 
         self.s_dim = env.observation_space.shape
 
-        self.eps_decay = eps_decay
-        self.eps_min = eps_min
+        self.max_nr_env_interactions = max_nr_env_interactions
+
+        self.eps = eps
+        self.decay_eps = eps_decay_func
 
         self.gamma = gamma
-        self.eps = eps
-        self.tau = tau
-
-        self.batch_size = batch_size
-        self.buff = ReplayBuffer(max_buffer_size=max_buffer_size)
+        self.buff = buff_obj
+        self.tau = tau # TODO remove
 
         self._init_ph()
         self._init_net(use_conv_net)
@@ -110,7 +156,7 @@ class DQN(BaseDeepAgent):
         self.reward_ph = tf.placeholder(tf.float32, (None,), "reward")
         self.action_ph = tf.placeholder(tf.int32, (None,), "action")
         self.is_done_ph = tf.placeholder(tf.float32, (None,), "is_done")
-        self.target_q_ph = tf.placeholder(tf.float32, (None,), "is_done")
+        self.target_q_ph = tf.placeholder(tf.float32, (None,), "target_q")
 
 
     def _init_net(self,use_conv_net):
@@ -133,7 +179,9 @@ class DQN(BaseDeepAgent):
 
         self.q_values_state = tf.reduce_sum(tf.multiply(self.learning_net.output, tf.one_hot(self.action_ph, self.n_actions)),axis=1)
 
-        self.loss = tf.reduce_mean((tf.stop_gradient(self.target_q_values) - self.q_values_state)**2.0)
+        # self.loss = tf.reduce_mean((tf.stop_gradient(self.target_q_values) - self.q_values_state)**2.0)
+
+        self.loss = tf.losses.huber_loss(labels=tf.stop_gradient(self.target_q_values), predictions=self.q_values_state)
 
         self.train_opt = tf.train.AdamOptimizer(lr).minimize(self.loss)
 
@@ -162,9 +210,11 @@ class DQN(BaseDeepAgent):
         # seems to be needed in beginning..
         self.copy_target_network_params = [self.target_net.weights[i].assign(self.learning_net.weights[i]) for i in range(len(self.target_net.weights))]
 
-    def policy(self, state,greedy=False):
+    def policy(self, state, greedy=False):
 
         if random.random() > self.eps or greedy:
+
+            # TODO do tf imp
 
             feed_dict = {self.state_ph: state}
             action = np.argmax(self.sess.run(self.learning_net.output, feed_dict), axis=1)
@@ -202,19 +252,15 @@ class DQN(BaseDeepAgent):
 
             self.eval_summary = tf.summary.scalar("eval_reward", self.eval_reward_var)
 
-    def decay_eps(self):
-        self.eps = max(self.eps*self.eps_decay,self.eps_min)
-
     def copy_network_parameters(self):
         self.sess.run(self.update_target_network_params)
 
     def hard_copy_network_parameters(self):
         self.sess.run(self.copy_target_network_params)
 
-    def _run_episode(self, max_nr_steps, train=False):
+    def _run_episode(self, max_nr_env_interactions, max_nr_steps, batch_size, nr_env_interact_before_copy=10000, update_freq=4):
 
         env = self.env
-        batch_size = self.batch_size
         buff = self.buff
 
         done = False
@@ -222,7 +268,7 @@ class DQN(BaseDeepAgent):
         i_step = 0
         acc_reward = 0
 
-        while i_step < max_nr_steps and not done:
+        while i_step < max_nr_steps and not done and (self.nr_env_interactions < max_nr_env_interactions):
 
             a = self.policy([s])[0]
 
@@ -230,7 +276,7 @@ class DQN(BaseDeepAgent):
 
             buff.add(s, a, r, done, s_nxt)
 
-            if train:
+            if buff.have_stored_enough() and i_step % update_freq == 0:
 
                 state_mb, action_mb, reward_mb, done_mb, nxt_state_mb = buff.sample(batch_size)
 
@@ -248,46 +294,37 @@ class DQN(BaseDeepAgent):
 
                 self.writer.flush()
 
-                # self.copy_network_parameters()  # TODO: all the time?
-
-                if self.nr_env_interactions%500==0:
+                if self.nr_env_interactions % nr_env_interact_before_copy == 0:
                     self.hard_copy_network_parameters()
 
             s = s_nxt
             acc_reward += r
 
+            self.eps = self.decay_eps(self.nr_env_interactions)
+
             i_step += 1
+
             self.nr_env_interactions += 1
 
-        if train:
-            self.decay_eps()
+        return acc_reward, i_step, done
 
-        return acc_reward, i_step
-
-    def run_episodes(self,n_episodes,verbosity=0, max_nr_steps=100000, eval=False, eval_freq=20, n_interact_2_evaluate=100):
+    def run_episodes(self, batch_size=32, verbosity=0, max_nr_steps=100000, eval=False, eval_freq=20, n_interact_2_evaluate=100):
 
         time_start = time.time()
 
         self.hard_copy_network_parameters() # NEW...
 
-        while not self.buff.have_stored_enough():
-            _, _ = self._run_episode(max_nr_steps, train=False)
+        i_ep = 0
 
-            if verbosity > 1:
-                print "Buffer size %i, init ratio %f" % (self.buff.size,self.buff.init_ratio())
+        while self.nr_env_interactions < self.max_nr_env_interactions:
 
-        if verbosity > 0:
-            print "Buffer initialized in %f s with %i samples"%(time.time()-time_start,self.buff.size)
-
-        eval_rewards = 0
-
-        for i_ep in range(n_episodes):
-
-            ep_reward, i_step = self._run_episode(max_nr_steps,train=True)
+            ep_reward, i_step, done = self._run_episode(self.max_nr_env_interactions, max_nr_steps, batch_size)
 
             if eval and (i_ep % eval_freq == 0):
 
-                eval_rewards = np.mean(evaluate_agent(self, self.env, n_games=n_interact_2_evaluate, greedy=False, verbosity=verbosity,render=False))
+                eval_rewards = np.mean(evaluate_agent(self, self.env, n_games=n_interact_2_evaluate,
+                                                      greedy=False, verbosity=verbosity, render=False,
+                                                      max_step=max_nr_steps))
 
                 summary = self.sess.run(self.eval_summary, {self.eval_reward_var: eval_rewards})
 
@@ -304,6 +341,8 @@ class DQN(BaseDeepAgent):
 
             self.writer.flush()
 
+
+
             if verbosity > 0:
 
                 out_str = "Episode: %i"%(i_ep)
@@ -314,18 +353,82 @@ class DQN(BaseDeepAgent):
                 out_str += " Buffer size: %i" % (self.buff.size)
                 out_str += " eps: %f" % (self.eps)
                 out_str += " episode_steps: %i" % (i_step)
+                out_str += " elapsed time: %i" % (time.time()-time_start)
 
                 print out_str
+            i_ep += 1
 
     def __repr__(self):
         return "DQN"
+
+
+
+class PieceWiseLinearEpsDecay(object):
+
+    def __init__(self, eps, eps_annealing_frames=1000000, eps_final=0.1, eps_final_frame=0.01, max_nr_env_steps=1000000, buffer_start_size=50000):
+
+        self.eps_initial = eps
+        self.eps_annealing_frames = eps_annealing_frames
+
+        # OLD
+        # self.eps_decay = eps_decay
+        # self.eps_min = eps_min
+        # self.eps_start = eps
+        # TODO make annealer funciton...?
+        # as suggested by: https://github.com/fg91/Deep-Q-Learning/blob/master/DQN.ipynb
+        # https://github.com/fg91/Deep-Q-Learning/blob/master/DQN.ipynb
+        self.replay_memory_start_size = buffer_start_size
+
+        self.slope = -(self.eps_initial - eps_final) / self.eps_annealing_frames
+        self.intercept = self.eps_initial - self.slope * self.replay_memory_start_size
+        self.slope_2 = (eps_final_frame - eps_final) / (max_nr_env_steps - (self.eps_annealing_frames + self.replay_memory_start_size))
+        self.intercept_2 = eps_final_frame - self.slope_2 * max_nr_env_steps
+
+    def __call__(self, nr_env_interactions):
+
+        # as suggested by: https://github.com/fg91/Deep-Q-Learning/blob/master/DQN.ipynb
+
+        if nr_env_interactions < self.replay_memory_start_size:
+            eps = self.eps_initial
+
+        elif (nr_env_interactions >= self.replay_memory_start_size) and (nr_env_interactions < (self.replay_memory_start_size + self.eps_annealing_frames)):
+            eps = self.slope * nr_env_interactions + self.intercept
+
+        else: #  nr_env_interactions >= self.replay_memory_start_size + self.eps_annealing_frames:
+            eps = self.slope_2 * nr_env_interactions + self.intercept_2
+
+        return eps
+
+
+        # OLD
+        # self.eps = max(self.eps*self.eps_decay,self.eps_min)
+        # self.eps = self.eps_min + (self.eps_start - self.eps_min) * np.exp(-self.eps_decay * self.train_step)
+
+def make_agent(env, sess, eps_init):
+    # 1000000
+
+    buffer = ReplayBuffer(max_buffer_size=70000, buffer_start_size=20000)
+
+    # eps_decay_func = PieceWiseLinearEpsDecay(eps_init, eps_annealing_frames=1000000,
+    #                                          eps_final=0.1, eps_final_frame=0.01,
+    #                                          max_nr_env_steps=1000000, buffer_start_size=50000) ORG
+
+    eps_decay_func = PieceWiseLinearEpsDecay(1.0, eps_annealing_frames=1e6,
+                                             eps_final=0.1, eps_final_frame=0.01,
+                                             max_nr_env_steps=3e6, buffer_start_size=20000)
+
+    agent = DQN(env=env, sess=sess, eps=eps_init, eps_decay_func=eps_decay_func, buff_obj=buffer,
+                gamma=0.99, tau=0, max_nr_env_interactions=10000000, use_conv_net=True, lr=1e-4) #0.0000625)
+
+    return agent
 
 def main():
 
     # env = gym.make("PongNoFrameskip-v4")
     env = gym.make("BreakoutDeterministic-v4")
 
-    env = PreprocessAtari(env)
+    # env = PreprocessAtari(env)
+    env = ProcessFrame84(env)
     env = FrameBuffer(env)
 
     # env = gym.make("CartPole-v0")
@@ -335,14 +438,27 @@ def main():
 
     sess = tf.InteractiveSession()
 
-    agent = DQN(env, sess, eps=1.0, max_buffer_size=100000, gamma=0.99, lr=1e-4, tau=0.01, batch_size=32,use_conv_net=True)
+    agent = DQN(env, sess, eps=1.0, max_buffer_size=100000, gamma=0.99, lr=1e-4, tau=0.01, batch_size=32, use_conv_net=True)
 
     sess.run(tf.global_variables_initializer())
 
-    agent.run_episodes(1000, verbosity=1, eval=True, eval_freq=10, n_interact_2_evaluate=3)
+    agent.run_episodes(10000, verbosity=1, eval=True, eval_freq=10, n_interact_2_evaluate=3)
 
     agent.close()
 
 if __name__=="__main__":
 
-    main()
+    # main()
+
+    import matplotlib.pyplot as plt
+
+
+    eps_decay_func = PieceWiseLinearEpsDecay(1.0, eps_annealing_frames=1e6,
+                                             eps_final=0.1, eps_final_frame=0.01,
+                                             max_nr_env_steps=3e5, buffer_start_size=20000)
+
+    x = [eps_decay_func(i)  for i in range(0,3*10**6,100)]
+
+    plt.figure(1)
+    plt.plot(range(0,3*10**6,100),x)
+    plt.show()

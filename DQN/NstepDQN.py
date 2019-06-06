@@ -8,7 +8,7 @@ class NstepDQN(DQN):
 
     N = 4
 
-    def __init__(self, env, sess, eps, max_buffer_size, gamma, lr, tau, batch_size, N=4, use_conv_net=False, eps_decay =0.99, eps_min=0.05):
+    def __init__(self, env, sess, eps, max_buffer_size, gamma, lr, tau, batch_size, N=4, use_conv_net=False, eps_decay =5e-6, eps_min=0.05):
 
         super(NstepDQN,self).__init__(env, sess, eps, max_buffer_size, gamma, lr, tau, batch_size, use_conv_net, eps_decay, eps_min)
         self.N = N
@@ -79,6 +79,8 @@ class NstepDQN(DQN):
 
                 self.copy_network_parameters()  # TODO: all the time?
 
+                self.train_step += 1
+
             traj_N.append(TransitionTuple(s, a, r, s_nxt, done))
 
             s = s_nxt
@@ -100,6 +102,9 @@ class NstepDQN(DQN):
 
                 buff.add(s_t, a_t, r_N, done_t_Np1, s_t_Np1)
 
+
+
+        if train:
             self.decay_eps()
 
         return acc_reward, i_step
